@@ -66,6 +66,10 @@ let getDetalhes = function (body) {
   return retval;
 };
 
+let getDecisoes = function (body){
+  console.log(body);
+}
+
 (async () => {
   const response = await fetch("https://ww2.stj.jus.br/processo/pesquisa/", {
     headers: {
