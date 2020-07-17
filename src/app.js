@@ -1,10 +1,16 @@
 const fetch = require("node-fetch");
 const jsdom = require("jsdom");
 const { JSDOM } = jsdom;
-const accents = require('remove-accents');
+const accents = require("remove-accents");
+const pdfjs = require('pdfjs-dist/es5/build/pdf.js');
+const fs = require("fs");
+const { Readable } = require('stream');
+
 let dataInicial = "01/02/2019",
   dataFinal = "01/02/2019";
-
+const LINK_REGEX = /sequencial\=(?<seq>[0-9]*).*num_registro\=(?<nreg>[0-9]*).*data\=(?<dt>[0-9]*).*/;
+const LINK =
+  "https://ww2.stj.jus.br/websecstj/cgi/revista/REJ.cgi/ITA?seq=${seq}&tipo=0&nreg=${nreg}&SeqCgrmaSessao=&CodOrgaoJgdr=&dt=${dt}&formato=PDF&salvar=false";
 let getNumeroDeProcessos = function (body) {
   const regex = /Pesquisa resultou em <b>([0-9]*)<\/b> registro\(s\)!/;
   let match = regex.exec(body);
@@ -47,28 +53,109 @@ let fetchProcesso = async function (href) {
   });
   const body = await response.textConverted();
   let detalhes = getDetalhes(body);
-  console.log(detalhes);
+  let decisoes = getDecisoes(body);
+  // console.log(detalhes);
   return body;
 };
 
 let getDetalhes = function (body) {
   //classSpanDetalhesTexto
   let dom = new JSDOM(body);
-  let list = dom.window.document.querySelectorAll("#idDivDetalhes .classDivLinhaDetalhes");
+  let list = dom.window.document.querySelectorAll(
+    "#idDivDetalhes .classDivLinhaDetalhes"
+  );
   let retval = {};
   for (let detalhe of list) {
-    let label = detalhe.querySelector('.classSpanDetalhesLabel').textContent.trim();
-    if(label.length > 0){
-      label = accents.remove(label).replace(/\(.\)|:/g,'').trim().replace(/\s+/g,'-').toLowerCase();
-      retval[label] = detalhe.querySelector('.classSpanDetalhesTexto').textContent.trim().replace(/\s+/g,' ');
+    let label = detalhe
+      .querySelector(".classSpanDetalhesLabel")
+      .textContent.trim();
+    if (label.length > 0) {
+      label = accents
+        .remove(label)
+        .replace(/\(.\)|:/g, "")
+        .trim()
+        .replace(/\s+/g, "-")
+        .toLowerCase();
+      retval[label] = detalhe
+        .querySelector(".classSpanDetalhesTexto")
+        .textContent.trim()
+        .replace(/\s+/g, " ");
     }
   }
   return retval;
 };
 
-let getDecisoes = function (body){
-  console.log(body);
+let createLink = function (endpoint, seq, nreg, dt) {
+  return `https://ww2.stj.jus.br/websecstj/cgi/revista/REJ.cgi/${endpoint}?seq=${seq}&tipo=0&nreg=${nreg}&SeqCgrmaSessao=&CodOrgaoJgdr=&dt=${dt}&formato=PDF&salvar=false`;
+};
+
+async function getPdfText(data) {
+  let doc = await pdfjs.getDocument({ data: new Uint8Array(data) }).promise;
+  let pageTexts = Array.from({ length: doc.numPages }, async (v, i) => {
+    return (await (await doc.getPage(i + 1)).getTextContent()).items
+      .map((token) => token.str)
+      .join("");
+  });
+  return (await Promise.all(pageTexts)).join("");
 }
+
+let downloadFile = async function (url) {
+  const res = await fetch(url, {
+    headers: {
+      accept: "application/pdf",
+      "accept-language": "pt,en-US;q=0.9,en;q=0.8,ro;q=0.7",
+      origin: "https://ww2.stj.jus.br",
+      Referer:
+        "https://ww2.stj.jus.br/processo/pesquisa/?aplicacao=processos.ea",
+      "cache-control": "max-age=0",
+      "sec-fetch-dest": "document",
+      "sec-fetch-mode": "navigate",
+      "sec-fetch-site": "same-origin",
+      "sec-fetch-user": "?1",
+      "upgrade-insecure-requests": "1",
+    },
+    referrer: "https://ww2.stj.jus.br/processo/pesquisa/",
+    referrerPolicy: "no-referrer-when-downgrade",
+    body: null,
+    method: "GET",
+    mode: "cors",
+  });
+  let buffer = await new Promise((resolve, reject) => {
+    res.arrayBuffer().then(function (buffer) {
+      resolve(buffer);
+    });
+  });
+  return buffer;
+};
+let getDecisoes = async function (body) {
+  //classSpanDetalhesTexto
+  let dom = new JSDOM(body);
+  let list = dom.window.document.querySelectorAll(
+    "#idDivDecisoes .classDivConteudoPesquisaProcessual"
+  );
+  for (let detalhe of list) {
+    console.log(detalhe.className);
+    for (let child of detalhe.children) {
+      let clazz = child.className;
+      if (clazz == "clsDecisoesMonocraticasBlocoExterno") {
+        let links = child.querySelectorAll(".clsDecisoesMonocraticasTopoLink");
+        for (let link of links) {
+          let onclick = link.attributes["onclick"].value;
+          let {
+            groups: { seq, nreg, dt },
+          } = onclick.match(LINK_REGEX);
+          let docUrl = createLink("MON", seq, nreg, dt);
+          let pdf = await downloadFile(docUrl);
+          let text = await getPdfText(pdf);
+          console.log(text,'\n\n');
+          // fs.writeFileSync(`/home/diogopontual/tmp/${(new Date()).getTime()}.pdf`, pdf);
+        }
+      } else if (clazz == "classDivLinhaDecisoesDocumentos") {
+      }
+    }
+  }
+  return "";
+};
 
 (async () => {
   const response = await fetch("https://ww2.stj.jus.br/processo/pesquisa/", {
