@@ -52,9 +52,9 @@ let fetchProcesso = async function (href) {
     mode: "cors",
   });
   const body = await response.textConverted();
-  let detalhes = getDetalhes(body);
-  let decisoes = getDecisoes(body);
-  // console.log(detalhes);
+  let detalhes = await getDetalhes(body);
+  let decisoes = await getDecisoes(body);
+  console.log(decisoes);
   return body;
 };
 
@@ -92,9 +92,12 @@ let createLink = function (endpoint, seq, nreg, dt) {
 async function getPdfText(data) {
   let doc = await pdfjs.getDocument({ data: new Uint8Array(data) }).promise;
   let pageTexts = Array.from({ length: doc.numPages }, async (v, i) => {
-    return (await (await doc.getPage(i + 1)).getTextContent()).items
+    return (await (await doc.getPage(i + 1)).getTextContent({
+      normalizeWhitespace: true,
+      disableCombineTextItems: false
+    })).items
       .map((token) => token.str)
-      .join("");
+      .join(" ").replace(/ +/g, ' ');
   });
   return (await Promise.all(pageTexts)).join("");
 }
@@ -128,33 +131,47 @@ let downloadFile = async function (url) {
   return buffer;
 };
 let getDecisoes = async function (body) {
+  let retval = [];
   //classSpanDetalhesTexto
   let dom = new JSDOM(body);
   let list = dom.window.document.querySelectorAll(
     "#idDivDecisoes .classDivConteudoPesquisaProcessual"
   );
   for (let detalhe of list) {
-    console.log(detalhe.className);
     for (let child of detalhe.children) {
       let clazz = child.className;
       if (clazz == "clsDecisoesMonocraticasBlocoExterno") {
         let links = child.querySelectorAll(".clsDecisoesMonocraticasTopoLink");
+        let ministro = child.querySelector(".clsDecisoesMonocraticasLinhaMinistroNome");
         for (let link of links) {
           let onclick = link.attributes["onclick"].value;
+          let titulo = link.textContent;
+          let {
+            groups: { tipoRecurso, dataPublicacao },
+          } = titulo.match(/^(?<tipoRecurso>[a-zA-Z]+)\s.* - (?<dataPublicacao>[0-9][0-9]\/[0-9][0-9]\/[0-9][0-9][0-9][0-9])\)/);
           let {
             groups: { seq, nreg, dt },
           } = onclick.match(LINK_REGEX);
           let docUrl = createLink("MON", seq, nreg, dt);
           let pdf = await downloadFile(docUrl);
-          let text = await getPdfText(pdf);
-          console.log(text,'\n\n');
+          let texto = await getPdfText(pdf);
           // fs.writeFileSync(`/home/diogopontual/tmp/${(new Date()).getTime()}.pdf`, pdf);
+          retval.push(
+            {
+              dataPublicacao: dataPublicacao,
+              tipoRecurso: tipoRecurso,
+              tipoDecisao: "MONOCRATICA",
+              texto: texto,
+              titulo: titulo,
+              link: docUrl,
+              ministro: (ministro ? ministro.textContent.replace('-', '').trim() : null)
+            });
         }
       } else if (clazz == "classDivLinhaDecisoesDocumentos") {
       }
     }
   }
-  return "";
+  return retval;
 };
 
 (async () => {
