@@ -10,7 +10,7 @@
   "license": "ISC",
   "dependencies": {
     "encoding": "^0.1.12",
-    "jsdom": "^16.2.2",
+    "jsdom": "^16.5.0",
     "node-fetch": "^2.6.0",
     "pdfjs-dist": "^2.4.456",
     "remove-accents": "^0.4.2",
